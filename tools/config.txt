@@ -1,0 +1,19 @@
+# マスククリッピング設定ファイル
+
+# 入力画像フォルダ
+image_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\down\Focused
+
+# マスク画像フォルダ
+mask_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\down\Focused_mask
+
+# 出力フォルダ
+output_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\crop
+
+# ベース画像の背景色 (R, G, B) 0-255
+base_color = 0, 0, 0
+
+# 回転角度 (0, 90, 180, 270)
+rotation = 180
+
+# 出力フォーマット (png, jpg, bmp)
+output_format = png
