@@ -5,7 +5,8 @@ const viewerFrameEl = document.getElementById("viewerFrame");
 const scrollPadEl = document.getElementById("scrollPad");
 
 const PAD_CENTER = 470;
-const PAD_STEP = 80;
+const PAD_STEP_X = 20; // 横方向（左右）感度
+const PAD_STEP_Y = 80; // 縦方向（上下）感度
 
 let images = [];
 let currentIndex = 0;
@@ -17,6 +18,22 @@ let dragLastY = 0;
 let dragAccumX = 0;
 let dragAccumY = 0;
 
+// Zoom state
+let zoomLevel = 1;
+let zoomMin = 0.5;
+let zoomMax = 10;
+let zoomStep = 0.1;
+let panX = 0;
+let panY = 0;
+let isPanning = false;
+
+// Orbit navigation state
+let navigationMode = "orbit"; // "orbit" or "local"
+let sceneCenter = [0, 0, 0];
+let worldUpVec = [0, 1, 0];
+let horizAxis1 = [1, 0, 0];
+let horizAxis2 = [0, 0, 1];
+
 function normalize(vec) {
   const mag = Math.hypot(vec[0], vec[1], vec[2]) || 1;
   return [vec[0] / mag, vec[1] / mag, vec[2] / mag];
@@ -24,6 +41,14 @@ function normalize(vec) {
 
 function dot(a, b) {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function cross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
 }
 
 function sub(a, b) {
@@ -117,9 +142,123 @@ function updateDisplayedImage() {
   imageEl.src = imgPath;
   imageMetaEl.textContent = `index: ${currentIndex + 1}/${images.length} | image_id: ${current.imageId} | file: ${current.name}`;
   statusEl.textContent = `表示中: ${current.name}`;
+
+  // Reset zoom/pan on image change
+  resetZoom();
 }
 
-function findNextIndex(direction) {
+function resetZoom() {
+  zoomLevel = 1;
+  panX = 0;
+  panY = 0;
+  applyZoomTransform();
+}
+
+function applyZoomTransform() {
+  imageEl.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+  imageEl.style.transformOrigin = "center center";
+}
+
+// ─── Orbit navigation helpers ───
+
+function computeOrbitParams() {
+  // Compute scene center (centroid of all camera positions)
+  let cx = 0, cy = 0, cz = 0;
+  for (const img of images) {
+    cx += img.center[0];
+    cy += img.center[1];
+    cz += img.center[2];
+  }
+  const n = images.length;
+  sceneCenter = [cx / n, cy / n, cz / n];
+
+  // Auto-detect world up from average camera up vectors
+  let ux = 0, uy = 0, uz = 0;
+  for (const img of images) {
+    ux += img.up[0];
+    uy += img.up[1];
+    uz += img.up[2];
+  }
+  const mag = Math.hypot(ux, uy, uz);
+  if (mag > 0.01) {
+    worldUpVec = [ux / mag, uy / mag, uz / mag];
+  } else {
+    worldUpVec = [0, 1, 0];
+  }
+
+  // Compute two orthogonal horizontal reference axes
+  let ref = [1, 0, 0];
+  if (Math.abs(dot(worldUpVec, ref)) > 0.9) {
+    ref = [0, 0, 1];
+  }
+  horizAxis1 = normalize(cross(worldUpVec, ref));
+  horizAxis2 = normalize(cross(worldUpVec, horizAxis1));
+
+  console.log("[Orbit] center:", sceneCenter, "worldUp:", worldUpVec);
+}
+
+function getSpherical(position) {
+  const rel = sub(position, sceneCenter);
+  const upComp = dot(rel, worldUpVec);
+  const h1 = dot(rel, horizAxis1);
+  const h2 = dot(rel, horizAxis2);
+  const rHoriz = Math.hypot(h1, h2);
+  return {
+    r: Math.hypot(rel[0], rel[1], rel[2]),
+    elevation: Math.atan2(upComp, rHoriz),
+    azimuth: Math.atan2(h2, h1),
+  };
+}
+
+function angleDiff(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+}
+
+function findNextIndexOrbit(direction) {
+  const curSph = getSpherical(images[currentIndex].center);
+
+  let bestIndex = -1;
+  let bestDist = Infinity;
+
+  for (let i = 0; i < images.length; i += 1) {
+    if (i === currentIndex) continue;
+
+    const candSph = getSpherical(images[i].center);
+    const dAz = angleDiff(candSph.azimuth, curSph.azimuth);
+    const dEl = candSph.elevation - curSph.elevation;
+
+    let primary, lateral;
+    switch (direction) {
+      case "left":  primary =  dAz; lateral = dEl; break;
+      case "right": primary = -dAz; lateral = dEl; break;
+      case "up":    primary =  dEl; lateral = dAz; break;
+      case "down":  primary = -dEl; lateral = dAz; break;
+    }
+
+    // Must move in the desired direction
+    if (primary < 0.001) continue;
+
+    // Alignment check: primary should dominate (~60° cone)
+    const angularDist = Math.hypot(primary, lateral);
+    const alignment = primary / angularDist;
+    if (alignment < 0.5) continue;
+
+    // Pick the nearest camera in this direction
+    if (angularDist < bestDist) {
+      bestDist = angularDist;
+      bestIndex = i;
+    }
+  }
+
+  return bestIndex;
+}
+
+// ─── Local navigation (original) ───
+
+function findNextIndexLocal(direction) {
   const current = images[currentIndex];
 
   let primaryAxis;
@@ -175,6 +314,13 @@ function findNextIndex(direction) {
   return bestIndex;
 }
 
+function findNextIndex(direction) {
+  if (navigationMode === "orbit") {
+    return findNextIndexOrbit(direction);
+  }
+  return findNextIndexLocal(direction);
+}
+
 function navigate(direction) {
   if (isNavigating || images.length < 2) {
     return;
@@ -200,8 +346,8 @@ function resetScrollPadToCenter() {
 }
 
 function applyScrollDelta(deltaX, deltaY) {
-  const xSteps = Math.trunc(deltaX / PAD_STEP);
-  const ySteps = Math.trunc(deltaY / PAD_STEP);
+  const xSteps = Math.trunc(deltaX / PAD_STEP_X);
+  const ySteps = Math.trunc(deltaY / PAD_STEP_Y);
 
   if (xSteps > 0) {
     for (let i = 0; i < xSteps; i += 1) {
@@ -233,7 +379,7 @@ function setupInputHandlers() {
     const dx = scrollPadEl.scrollLeft - PAD_CENTER;
     const dy = scrollPadEl.scrollTop - PAD_CENTER;
 
-    if (Math.abs(dx) < PAD_STEP && Math.abs(dy) < PAD_STEP) {
+    if (Math.abs(dx) < PAD_STEP_X && Math.abs(dy) < PAD_STEP_Y) {
       return;
     }
 
@@ -241,25 +387,73 @@ function setupInputHandlers() {
     resetScrollPadToCenter();
   });
 
+  // Wheel: zoom in/out
   viewerFrameEl.addEventListener(
     "wheel",
     (event) => {
       event.preventDefault();
-      applyScrollDelta(event.deltaX, event.deltaY);
+
+      if (event.ctrlKey) {
+        // Ctrl+Wheel: navigate (original behavior)
+        applyScrollDelta(event.deltaX, event.deltaY);
+        return;
+      }
+
+      const delta = event.deltaY > 0 ? -zoomStep : zoomStep;
+      const newZoom = Math.min(zoomMax, Math.max(zoomMin, zoomLevel + delta * zoomLevel));
+
+      // Zoom toward cursor position
+      const rect = viewerFrameEl.getBoundingClientRect();
+      const cx = event.clientX - rect.left - rect.width / 2;
+      const cy = event.clientY - rect.top - rect.height / 2;
+
+      const scaleFactor = newZoom / zoomLevel;
+      panX = cx - scaleFactor * (cx - panX);
+      panY = cy - scaleFactor * (cy - panY);
+
+      zoomLevel = newZoom;
+      applyZoomTransform();
     },
     { passive: false }
   );
 
+  // Double-click: reset zoom
+  viewerFrameEl.addEventListener("dblclick", () => {
+    resetZoom();
+  });
+
   viewerFrameEl.addEventListener("mousedown", (event) => {
-    isDragging = true;
-    dragLastX = event.clientX;
-    dragLastY = event.clientY;
-    dragAccumX = 0;
-    dragAccumY = 0;
-    viewerFrameEl.classList.add("dragging");
+    if (zoomLevel > 1.05) {
+      // Zoomed in: drag to pan
+      isPanning = true;
+      isDragging = false;
+      dragLastX = event.clientX;
+      dragLastY = event.clientY;
+      viewerFrameEl.classList.add("dragging");
+    } else {
+      // Normal zoom: drag to navigate
+      isPanning = false;
+      isDragging = true;
+      dragLastX = event.clientX;
+      dragLastY = event.clientY;
+      dragAccumX = 0;
+      dragAccumY = 0;
+      viewerFrameEl.classList.add("dragging");
+    }
   });
 
   window.addEventListener("mousemove", (event) => {
+    if (isPanning) {
+      const dx = event.clientX - dragLastX;
+      const dy = event.clientY - dragLastY;
+      dragLastX = event.clientX;
+      dragLastY = event.clientY;
+      panX += dx;
+      panY += dy;
+      applyZoomTransform();
+      return;
+    }
+
     if (!isDragging) {
       return;
     }
@@ -272,17 +466,23 @@ function setupInputHandlers() {
     dragAccumX += dx;
     dragAccumY += dy;
 
-    const xSteps = Math.trunc(dragAccumX / PAD_STEP);
-    const ySteps = Math.trunc(dragAccumY / PAD_STEP);
+    const xSteps = Math.trunc(dragAccumX / PAD_STEP_X);
+    const ySteps = Math.trunc(dragAccumY / PAD_STEP_Y);
 
     if (xSteps !== 0 || ySteps !== 0) {
-      applyScrollDelta(xSteps * PAD_STEP, ySteps * PAD_STEP);
-      dragAccumX -= xSteps * PAD_STEP;
-      dragAccumY -= ySteps * PAD_STEP;
+      applyScrollDelta(xSteps * PAD_STEP_X, ySteps * PAD_STEP_Y);
+      dragAccumX -= xSteps * PAD_STEP_X;
+      dragAccumY -= ySteps * PAD_STEP_Y;
     }
   });
 
   window.addEventListener("mouseup", () => {
+    if (isPanning) {
+      isPanning = false;
+      viewerFrameEl.classList.remove("dragging");
+      return;
+    }
+
     if (!isDragging) {
       return;
     }
@@ -320,6 +520,7 @@ async function initialize() {
   try {
     const config = await loadConfig();
     imagesDirPath = config.imagesDirPath;
+    navigationMode = config.navigationMode || "orbit";
 
     const imagesTxtResponse = await fetch(config.imagesTxtPath);
     if (!imagesTxtResponse.ok) {
@@ -333,9 +534,14 @@ async function initialize() {
       throw new Error("images.txt から姿勢情報を取得できませんでした");
     }
 
+    if (navigationMode === "orbit") {
+      computeOrbitParams();
+    }
+
     currentIndex = 0;
     updateDisplayedImage();
     setupInputHandlers();
+    statusEl.textContent = `読み込み完了 (${images.length}枚, モード: ${navigationMode})`;
   } catch (error) {
     statusEl.textContent = `エラー: ${error.message}`;
     imageMetaEl.textContent = "config.json のパス設定とローカルサーバー起動状態を確認してください。";
