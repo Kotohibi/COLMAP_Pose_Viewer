@@ -9,6 +9,7 @@ const PAD_STEP_Y = 80; // 縦方向（上下）感度
 let images = [];
 let currentIndex = 0;
 let imagesDirPath = "";
+let imageLoadRequestId = 0;
 let isNavigating = false;
 let isDragging = false;
 let dragLastX = 0;
@@ -42,6 +43,9 @@ let sceneCenter = [0, 0, 0];
 let worldUpVec = [0, 1, 0];
 let horizAxis1 = [1, 0, 0];
 let horizAxis2 = [0, 0, 1];
+
+const IMAGE_EXT_CANDIDATES = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"];
+const resolvedImagePathCache = new Map();
 
 function normalize(vec) {
   const mag = Math.hypot(vec[0], vec[1], vec[2]) || 1;
@@ -144,13 +148,68 @@ function joinPath(base, name) {
   return `${normalizedBase}/${name}`;
 }
 
-function updateDisplayedImage() {
-  const current = images[currentIndex];
-  const imgPath = joinPath(imagesDirPath, current.name);
+function getStem(name) {
+  return name.replace(/\.[^/.]+$/, "");
+}
 
-  imageEl.src = imgPath;
+function buildImageCandidateNames(name) {
+  const stem = getStem(name);
+  const currentExtMatch = name.match(/\.[^/.]+$/);
+  const currentExt = currentExtMatch ? currentExtMatch[0].toLowerCase() : "";
+
+  const candidates = [name, stem];
+  for (const ext of IMAGE_EXT_CANDIDATES) {
+    if (ext !== currentExt) {
+      candidates.push(`${stem}${ext}`);
+    }
+  }
+
+  return [...new Set(candidates)];
+}
+
+function canLoadImage(path) {
+  return new Promise((resolve) => {
+    const probe = new Image();
+    probe.onload = () => resolve(true);
+    probe.onerror = () => resolve(false);
+    probe.src = path;
+  });
+}
+
+async function resolveImagePathIgnoringExtension(name) {
+  if (resolvedImagePathCache.has(name)) {
+    return resolvedImagePathCache.get(name);
+  }
+
+  const candidates = buildImageCandidateNames(name);
+  for (const candidateName of candidates) {
+    const candidatePath = joinPath(imagesDirPath, candidateName);
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await canLoadImage(candidatePath);
+    if (ok) {
+      resolvedImagePathCache.set(name, candidatePath);
+      return candidatePath;
+    }
+  }
+
+  return null;
+}
+
+async function updateDisplayedImage() {
+  const current = images[currentIndex];
+  const requestId = ++imageLoadRequestId;
+  const defaultPath = joinPath(imagesDirPath, current.name);
+  const resolvedPath = await resolveImagePathIgnoringExtension(current.name);
+
+  if (requestId !== imageLoadRequestId) {
+    return;
+  }
+
+  imageEl.src = resolvedPath || defaultPath;
   imageMetaEl.textContent = `index: ${currentIndex + 1}/${images.length} | image_id: ${current.imageId} | file: ${current.name}`;
-  statusEl.textContent = `Showing: ${current.name}`;
+  statusEl.textContent = resolvedPath
+    ? `Showing: ${current.name}`
+    : `Showing (fallback): ${current.name}`;
 
   // Reset zoom/pan on image change
   resetZoom();

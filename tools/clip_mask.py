@@ -43,6 +43,67 @@ def parse_color(color_str: str) -> tuple:
     return tuple(parts)
 
 
+def parse_output_size(size_str: str):
+    """出力解像度設定を解釈する。'original' または 'WIDTHxHEIGHT' を受け付ける。"""
+    text = (size_str or "original").strip().lower()
+    if text in ("", "original", "source", "input"):
+        return None
+
+    normalized = text.replace("*", "x").replace(",", "x")
+    if "x" not in normalized:
+        raise ValueError(f"output_size の形式が不正です: {size_str} (例: 1920x1080)")
+
+    width_text, height_text = normalized.split("x", 1)
+    width = int(width_text.strip())
+    height = int(height_text.strip())
+    if width <= 0 or height <= 0:
+        raise ValueError(f"output_size は正の整数で指定してください: {size_str}")
+    return (width, height)
+
+
+def parse_jpeg_quality(quality_str: str) -> int:
+    """JPEG品質を 1-100 で解釈する。未指定時は 95。"""
+    text = (quality_str or "95").strip()
+    quality = int(text)
+    if quality < 1 or quality > 100:
+        raise ValueError(f"jpeg_quality は 1-100 の範囲で指定してください: {quality_str}")
+    return quality
+
+
+def parse_center_crop_size(size_str: str):
+    """中心クロップサイズを解釈する。'none' または 'WIDTHxHEIGHT' を受け付ける。"""
+    text = (size_str or "none").strip().lower()
+    if text in ("", "none", "off", "disable", "false"):
+        return None
+
+    normalized = text.replace("*", "x").replace(",", "x")
+    if "x" not in normalized:
+        raise ValueError(f"center_crop_size の形式が不正です: {size_str} (例: 1024x1024)")
+
+    width_text, height_text = normalized.split("x", 1)
+    width = int(width_text.strip())
+    height = int(height_text.strip())
+    if width <= 0 or height <= 0:
+        raise ValueError(f"center_crop_size は正の整数で指定してください: {size_str}")
+    return (width, height)
+
+
+def parse_crop_center_shift(shift_str: str):
+    """中心クロップの中心点シフトを解釈する。'x,y' 形式（単位: px）。"""
+    text = (shift_str or "0,0").strip().lower()
+    if text in ("", "none", "off"):
+        return (0, 0)
+
+    normalized = text.replace("x", ",")
+    parts = [p.strip() for p in normalized.split(",") if p.strip() != ""]
+    if len(parts) != 2:
+        raise ValueError(f"crop_center_shift の形式が不正です: {shift_str} (例: 120,-80)")
+
+    shift_x = int(parts[0])
+    shift_y = int(parts[1])
+    return (shift_x, shift_y)
+
+
 # ---------- 画像処理 ----------
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -108,6 +169,37 @@ def rotate_image(image: Image.Image, angle: int) -> Image.Image:
         return image
 
 
+def center_crop_pair(image: Image.Image, mask: Image.Image, crop_size: tuple, center_shift: tuple):
+    """画像とマスクを同じ中心矩形でクロップする。center_shift は中心からの移動量(px)。"""
+    if mask.size != image.size:
+        print(f"  [WARN] クロップ前にマスクサイズ {mask.size} を画像サイズ {image.size} にリサイズします")
+        mask = mask.resize(image.size, Image.LANCZOS)
+
+    img_w, img_h = image.size
+    crop_w = min(crop_size[0], img_w)
+    crop_h = min(crop_size[1], img_h)
+
+    if (crop_w, crop_h) != crop_size:
+        print(f"  [WARN] center_crop_size {crop_size[0]}x{crop_size[1]} は入力サイズを超えるため {crop_w}x{crop_h} に調整します")
+
+    base_left = (img_w - crop_w) // 2
+    base_top = (img_h - crop_h) // 2
+
+    shift_x, shift_y = center_shift
+    left = base_left + shift_x
+    top = base_top + shift_y
+
+    max_left = img_w - crop_w
+    max_top = img_h - crop_h
+    left = max(0, min(left, max_left))
+    top = max(0, min(top, max_top))
+
+    right = left + crop_w
+    bottom = top + crop_h
+
+    return image.crop((left, top, right, bottom)), mask.crop((left, top, right, bottom))
+
+
 # ---------- メイン処理 ----------
 
 def main():
@@ -134,6 +226,10 @@ def main():
     base_color = parse_color(config.get("base_color", "0, 0, 0"))
     rotation   = int(config.get("rotation", "0"))
     output_fmt = config.get("output_format", "png").lower()
+    output_size = parse_output_size(config.get("output_size", "original"))
+    jpeg_quality = parse_jpeg_quality(config.get("jpeg_quality", "95"))
+    center_crop_size = parse_center_crop_size(config.get("center_crop_size", "none"))
+    crop_center_shift = parse_crop_center_shift(config.get("crop_center_shift", "0,0"))
 
     print(f"\n[設定]")
     print(f"  画像フォルダ : {image_folder}")
@@ -142,6 +238,11 @@ def main():
     print(f"  ベース色     : RGB{base_color}")
     print(f"  回転角度     : {rotation}°")
     print(f"  出力形式     : {output_fmt}")
+    print(f"  出力解像度   : {output_size[0]}x{output_size[1]}" if output_size else "  出力解像度   : original")
+    print(f"  中心クロップ : {center_crop_size[0]}x{center_crop_size[1]}" if center_crop_size else "  中心クロップ : none")
+    print(f"  クロップシフト: {crop_center_shift[0]},{crop_center_shift[1]} px")
+    if output_fmt in ("jpg", "jpeg"):
+        print(f"  JPEG品質     : {jpeg_quality}")
 
     # フォルダ存在チェック
     if not image_folder.exists():
@@ -184,6 +285,10 @@ def main():
             img = Image.open(img_path)
             mask = Image.open(mask_path)
 
+            # 中心クロップ
+            if center_crop_size is not None:
+                img, mask = center_crop_pair(img, mask, center_crop_size, crop_center_shift)
+
             # ベース画像生成 (入力画像と同じサイズ)
             base = create_base_image(img.size, base_color)
 
@@ -194,15 +299,21 @@ def main():
             if rotation != 0:
                 result = rotate_image(result, rotation)
 
+            # 出力解像度指定
+            if output_size is not None and result.size != output_size:
+                result = result.resize(output_size, Image.LANCZOS)
+
             # 出力
             out_name = f"{stem}.{output_fmt}"
             out_path = output_folder / out_name
 
             # JPEG は RGBA 非対応なので RGB に変換
+            save_kwargs = {}
             if output_fmt in ("jpg", "jpeg"):
                 result = result.convert("RGB")
+                save_kwargs = {"quality": jpeg_quality}
 
-            result.save(out_path)
+            result.save(out_path, **save_kwargs)
             print(f"    -> {out_path}")
             success += 1
 

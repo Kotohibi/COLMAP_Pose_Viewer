@@ -59,7 +59,7 @@ body {
   width: 100%;
   flex: 1;
   min-height: 0;
-  background: #0f172a;
+  background: #000000;
   border-radius: 8px;
   display: flex;
   justify-content: center;
@@ -85,12 +85,43 @@ body {
   margin-top: 10px;
   font-size: 13px;
   color: #334155;
+  flex-shrink: 0;
+}
+
+/* Desktop: keep everything within viewport without clipping */
+@media (hover: hover) and (pointer: fine) {
+  html,
+  body {
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
+  body {
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+
+  .layout {
+    height: 100%;
+    min-height: 0;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .viewer-panel {
+    overflow: hidden;
+  }
+
+  .viewer-frame {
+    min-height: 0;
+  }
 }
 
 
 
-/* Mobile/Tablet landscape: viewer fills the screen */
-@media (max-width: 1366px) and (orientation: landscape) {
+/* Mobile/Tablet landscape: viewer fills the screen (touch devices only) */
+@media (max-width: 1366px) and (orientation: landscape) and (hover: none) and (pointer: coarse) {
   html,
   body {
     overflow: hidden;

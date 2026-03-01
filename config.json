@@ -1,4 +1,5 @@
 {
-  "imagesTxtPath": "sparse/0/images.txt",
-  "imagesDirPath": "images"
+  "imagesTxtPath": "colmap/sparse/0/images.txt",
+  "imagesDirPath": "colmap/images",
+  "navigationMode": "orbit"
 }

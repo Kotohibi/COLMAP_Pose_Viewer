@@ -1,19 +1,39 @@
 # マスククリッピング設定ファイル
 
 # 入力画像フォルダ
-image_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\down\Focused
+image_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\up\Focused
 
 # マスク画像フォルダ
-mask_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\down\Focused_mask
+mask_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\up\Focused_mask
 
 # 出力フォルダ
-output_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\crop
+output_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\crop_small
 
 # ベース画像の背景色 (R, G, B) 0-255
 base_color = 0, 0, 0
 
 # 回転角度 (0, 90, 180, 270)
-rotation = 180
+rotation = 0
 
 # 出力フォーマット (png, jpg, bmp)
-output_format = png
+output_format = jpg
+
+# JPEG品質 (1-100, 数値が高いほど高品質・大容量)
+# output_format が jpg/jpeg の時のみ有効
+jpeg_quality = 70
+
+# 出力解像度
+# original: 入力画像と同じ解像度
+# 例: 1920x1080
+output_size = original
+
+# 中心クロップサイズ
+# none: クロップしない
+# 例: 1024x1024
+center_crop_size = 2200x2200
+
+# 中心クロップの中心点シフト (x,y) [px]
+# x: 右へ +, 左へ -
+# y: 下へ +, 上へ -
+# 例: 120,-80
+crop_center_shift = 0,100
