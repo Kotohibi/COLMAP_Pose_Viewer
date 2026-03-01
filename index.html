@@ -1,15 +1,15 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>COLMAP SfM Viewer</title>
-    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>COLMAP Pose Viewer</title>
+    <link rel="stylesheet" href="styles.css?v=3" />
   </head>
   <body>
     <header class="header">
-      <h1>COLMAP SfM Viewer</h1>
-      <p id="status">読み込み中...</p>
+      <h1>COLMAP Pose Viewer</h1>
+      <p id="status">Loading...</p>
     </header>
 
     <main class="layout">
@@ -19,22 +19,30 @@
         </div>
         <div class="image-meta" id="imageMeta"></div>
       </section>
-
-      <section class="control-panel">
-        <h2>スクロール操作</h2>
-        <p>下のパッドを上下/左右にスクロールすると、姿勢に基づいて画像が切り替わります。</p>
-        <div class="scroll-pad" id="scrollPad" aria-label="navigation pad">
-          <div class="scroll-pad-inner"></div>
-        </div>
-        <ul>
-          <li>上: 現在視点の上方向にあるカメラ位置へ移動</li>
-          <li>下: 現在視点の下方向にあるカメラ位置へ移動</li>
-          <li>左: 現在視点の左方向にあるカメラ位置へ移動</li>
-          <li>右: 現在視点の右方向にあるカメラ位置へ移動</li>
-        </ul>
-      </section>
     </main>
 
-    <script src="script.js" defer></script>
+    <script src="script.js?v=3" defer></script>
+    <script>
+      // Prevent iOS Safari page-level gestures (bounce scroll, swipe-back, pinch-zoom)
+      document.addEventListener('touchmove', function(e) {
+        if (e.target.closest('.viewer-frame')) {
+          return; // viewer handles its own touch
+        }
+        e.preventDefault();
+      }, { passive: false });
+
+      document.addEventListener('gesturestart', function(e) {
+        if (e.target.closest('.viewer-frame')) return;
+        e.preventDefault();
+      });
+      document.addEventListener('gesturechange', function(e) {
+        if (e.target.closest('.viewer-frame')) return;
+        e.preventDefault();
+      });
+      document.addEventListener('gestureend', function(e) {
+        if (e.target.closest('.viewer-frame')) return;
+        e.preventDefault();
+      });
+    </script>
   </body>
 </html>

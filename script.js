@@ -2,9 +2,7 @@ const statusEl = document.getElementById("status");
 const imageEl = document.getElementById("mainImage");
 const imageMetaEl = document.getElementById("imageMeta");
 const viewerFrameEl = document.getElementById("viewerFrame");
-const scrollPadEl = document.getElementById("scrollPad");
 
-const PAD_CENTER = 470;
 const PAD_STEP_X = 20; // 横方向（左右）感度
 const PAD_STEP_Y = 80; // 縦方向（上下）感度
 
@@ -26,6 +24,17 @@ let zoomStep = 0.1;
 let panX = 0;
 let panY = 0;
 let isPanning = false;
+
+// Touch state
+let touchStartX = 0;
+let touchStartY = 0;
+let touchAccumX = 0;
+let touchAccumY = 0;
+let isTouching = false;
+let touchPanning = false;
+let lastPinchDist = 0;
+let isPinching = false;
+let lastTapTime = 0;
 
 // Orbit navigation state
 let navigationMode = "orbit"; // "orbit" or "local"
@@ -141,7 +150,7 @@ function updateDisplayedImage() {
 
   imageEl.src = imgPath;
   imageMetaEl.textContent = `index: ${currentIndex + 1}/${images.length} | image_id: ${current.imageId} | file: ${current.name}`;
-  statusEl.textContent = `表示中: ${current.name}`;
+  statusEl.textContent = `Showing: ${current.name}`;
 
   // Reset zoom/pan on image change
   resetZoom();
@@ -330,7 +339,7 @@ function navigate(direction) {
   const nextIndex = findNextIndex(direction);
 
   if (nextIndex === -1) {
-    statusEl.textContent = `これ以上 ${direction} 方向に移動できる画像がありません`;
+    statusEl.textContent = `No more images available in the ${direction} direction`;
     isNavigating = false;
     return;
   }
@@ -338,11 +347,6 @@ function navigate(direction) {
   currentIndex = nextIndex;
   updateDisplayedImage();
   isNavigating = false;
-}
-
-function resetScrollPadToCenter() {
-  scrollPadEl.scrollLeft = PAD_CENTER;
-  scrollPadEl.scrollTop = PAD_CENTER;
 }
 
 function applyScrollDelta(deltaX, deltaY) {
@@ -371,21 +375,7 @@ function applyScrollDelta(deltaX, deltaY) {
 }
 
 function setupInputHandlers() {
-  resetScrollPadToCenter();
-
   imageEl.draggable = false;
-
-  scrollPadEl.addEventListener("scroll", () => {
-    const dx = scrollPadEl.scrollLeft - PAD_CENTER;
-    const dy = scrollPadEl.scrollTop - PAD_CENTER;
-
-    if (Math.abs(dx) < PAD_STEP_X && Math.abs(dy) < PAD_STEP_Y) {
-      return;
-    }
-
-    applyScrollDelta(dx, dy);
-    resetScrollPadToCenter();
-  });
 
   // Wheel: zoom in/out
   viewerFrameEl.addEventListener(
@@ -506,12 +496,144 @@ function setupInputHandlers() {
       navigate("left");
     }
   });
+
+  // ─── Touch events (iPad / mobile) ───
+
+  function getPinchDist(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  function getPinchCenter(touches) {
+    const rect = viewerFrameEl.getBoundingClientRect();
+    return {
+      x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left - rect.width / 2,
+      y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top - rect.height / 2,
+    };
+  }
+
+  viewerFrameEl.addEventListener(
+    "touchstart",
+    (event) => {
+      if (event.touches.length === 2) {
+        // Pinch start
+        event.preventDefault();
+        isPinching = true;
+        isTouching = false;
+        touchPanning = false;
+        lastPinchDist = getPinchDist(event.touches);
+        return;
+      }
+
+      if (event.touches.length === 1) {
+        event.preventDefault();
+        const touch = event.touches[0];
+
+        // Double-tap detection
+        const now = Date.now();
+        if (now - lastTapTime < 300) {
+          resetZoom();
+          lastTapTime = 0;
+          return;
+        }
+        lastTapTime = now;
+
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        touchAccumX = 0;
+        touchAccumY = 0;
+
+        if (zoomLevel > 1.05) {
+          touchPanning = true;
+          isTouching = false;
+        } else {
+          isTouching = true;
+          touchPanning = false;
+        }
+      }
+    },
+    { passive: false }
+  );
+
+  viewerFrameEl.addEventListener(
+    "touchmove",
+    (event) => {
+      if (isPinching && event.touches.length === 2) {
+        event.preventDefault();
+        const newDist = getPinchDist(event.touches);
+        const scale = newDist / lastPinchDist;
+        const newZoom = Math.min(zoomMax, Math.max(zoomMin, zoomLevel * scale));
+
+        const center = getPinchCenter(event.touches);
+        const scaleFactor = newZoom / zoomLevel;
+        panX = center.x - scaleFactor * (center.x - panX);
+        panY = center.y - scaleFactor * (center.y - panY);
+
+        zoomLevel = newZoom;
+        lastPinchDist = newDist;
+        applyZoomTransform();
+        return;
+      }
+
+      if (event.touches.length !== 1) return;
+      event.preventDefault();
+      const touch = event.touches[0];
+
+      if (touchPanning) {
+        const dx = touch.clientX - touchStartX;
+        const dy = touch.clientY - touchStartY;
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        panX += dx;
+        panY += dy;
+        applyZoomTransform();
+        return;
+      }
+
+      if (isTouching) {
+        const dx = touch.clientX - touchStartX;
+        const dy = touch.clientY - touchStartY;
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+
+        touchAccumX += dx;
+        touchAccumY += dy;
+
+        const xSteps = Math.trunc(touchAccumX / PAD_STEP_X);
+        const ySteps = Math.trunc(touchAccumY / PAD_STEP_Y);
+
+        if (xSteps !== 0 || ySteps !== 0) {
+          applyScrollDelta(xSteps * PAD_STEP_X, ySteps * PAD_STEP_Y);
+          touchAccumX -= xSteps * PAD_STEP_X;
+          touchAccumY -= ySteps * PAD_STEP_Y;
+        }
+      }
+    },
+    { passive: false }
+  );
+
+  viewerFrameEl.addEventListener("touchend", (event) => {
+    if (event.touches.length < 2) {
+      isPinching = false;
+    }
+    if (event.touches.length === 0) {
+      isTouching = false;
+      touchPanning = false;
+    }
+  });
+
+  viewerFrameEl.addEventListener("touchcancel", () => {
+    isTouching = false;
+    touchPanning = false;
+    isPinching = false;
+  });
 }
 
 async function loadConfig() {
   const response = await fetch("config.json");
   if (!response.ok) {
-    throw new Error("config.json の読み込みに失敗しました");
+    throw new Error("Failed to load config.json");
   }
   return response.json();
 }
@@ -524,14 +646,14 @@ async function initialize() {
 
     const imagesTxtResponse = await fetch(config.imagesTxtPath);
     if (!imagesTxtResponse.ok) {
-      throw new Error(`images.txt の読み込みに失敗: ${config.imagesTxtPath}`);
+      throw new Error(`Failed to load images.txt: ${config.imagesTxtPath}`);
     }
 
     const content = await imagesTxtResponse.text();
     images = parseImagesTxt(content);
 
     if (!images.length) {
-      throw new Error("images.txt から姿勢情報を取得できませんでした");
+      throw new Error("Failed to parse pose data from images.txt");
     }
 
     if (navigationMode === "orbit") {
@@ -541,10 +663,10 @@ async function initialize() {
     currentIndex = 0;
     updateDisplayedImage();
     setupInputHandlers();
-    statusEl.textContent = `読み込み完了 (${images.length}枚, モード: ${navigationMode})`;
+    statusEl.textContent = `Loaded (${images.length} images, mode: ${navigationMode})`;
   } catch (error) {
-    statusEl.textContent = `エラー: ${error.message}`;
-    imageMetaEl.textContent = "config.json のパス設定とローカルサーバー起動状態を確認してください。";
+    statusEl.textContent = `Error: ${error.message}`;
+    imageMetaEl.textContent = "Please check config.json paths and ensure the local server is running.";
   }
 }
 
