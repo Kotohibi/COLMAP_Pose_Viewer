@@ -2,9 +2,14 @@ const statusEl = document.getElementById("status");
 const imageEl = document.getElementById("mainImage");
 const imageMetaEl = document.getElementById("imageMeta");
 const viewerFrameEl = document.getElementById("viewerFrame");
+const pipOverlayEl = document.getElementById("pipOverlay");
+const pipCanvasEl = document.getElementById("pip3dCanvas");
+const pipToggleBtnEl = document.getElementById("pipToggleBtn");
+const pipSizeBtnEl = document.getElementById("pipSizeBtn");
+const pipPosBtnEl = document.getElementById("pipPosBtn");
 
-const PAD_STEP_X = 20; // 横方向（左右）感度
-const PAD_STEP_Y = 80; // 縦方向（上下）感度
+const PAD_STEP_X = 20; // Horizontal (left/right) sensitivity
+const PAD_STEP_Y = 80; // Vertical (up/down) sensitivity
 
 let images = [];
 let currentIndex = 0;
@@ -44,6 +49,21 @@ let worldUpVec = [0, 1, 0];
 let horizAxis1 = [1, 0, 0];
 let horizAxis2 = [0, 0, 1];
 
+// PiP 3D state
+let pipCtx = null;
+let pipInitialized = false;
+let pipSceneCenter = [0, 0, 0];
+let pipSceneRadius = 1;
+let pipViewYaw = -0.75;
+let pipViewPitch = 0.45;
+let pipViewDistance = 3.2;
+let pipVisible = true;
+let pipSizeIndex = 1;
+let pipCornerIndex = 0;
+
+const PIP_SIZE_CLASSES = ["pip-size-sm", "pip-size-md", "pip-size-lg"];
+const PIP_POS_CLASSES = ["pip-pos-tr", "pip-pos-tl", "pip-pos-br", "pip-pos-bl"];
+
 const IMAGE_EXT_CANDIDATES = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"];
 const resolvedImagePathCache = new Map();
 
@@ -66,6 +86,14 @@ function cross(a, b) {
 
 function sub(a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function add(a, b) {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+function scale(v, s) {
+  return [v[0] * s, v[1] * s, v[2] * s];
 }
 
 function mulMatVec(m, v) {
@@ -213,6 +241,7 @@ async function updateDisplayedImage() {
 
   // Reset zoom/pan on image change
   resetZoom();
+  drawPipOverlay();
 }
 
 function resetZoom() {
@@ -225,6 +254,248 @@ function resetZoom() {
 function applyZoomTransform() {
   imageEl.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
   imageEl.style.transformOrigin = "center center";
+}
+
+function ensurePipContext() {
+  if (!pipCanvasEl) {
+    return false;
+  }
+  if (!pipCtx) {
+    pipCtx = pipCanvasEl.getContext("2d");
+  }
+  return Boolean(pipCtx);
+}
+
+function applyPipUiState() {
+  if (!pipOverlayEl) {
+    return;
+  }
+
+  pipOverlayEl.classList.toggle("is-hidden", !pipVisible);
+
+  for (const c of PIP_SIZE_CLASSES) {
+    pipOverlayEl.classList.remove(c);
+  }
+  pipOverlayEl.classList.add(PIP_SIZE_CLASSES[pipSizeIndex]);
+
+  for (const c of PIP_POS_CLASSES) {
+    pipOverlayEl.classList.remove(c);
+  }
+  pipOverlayEl.classList.add(PIP_POS_CLASSES[pipCornerIndex]);
+
+  if (pipToggleBtnEl) {
+    pipToggleBtnEl.textContent = pipVisible ? "PiP On" : "PiP Off";
+  }
+  if (pipSizeBtnEl) {
+    pipSizeBtnEl.textContent = `Size ${pipSizeIndex + 1}`;
+  }
+  if (pipPosBtnEl) {
+    const cornerNames = ["TR", "TL", "BR", "BL"];
+    pipPosBtnEl.textContent = `Corner ${cornerNames[pipCornerIndex]}`;
+  }
+}
+
+function updatePipCanvasSize() {
+  if (!ensurePipContext()) {
+    return;
+  }
+
+  const rect = pipCanvasEl.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.round(rect.width * dpr));
+  const height = Math.max(1, Math.round(rect.height * dpr));
+
+  if (pipCanvasEl.width !== width || pipCanvasEl.height !== height) {
+    pipCanvasEl.width = width;
+    pipCanvasEl.height = height;
+  }
+
+  pipCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function rotateForPip(v) {
+  const cosY = Math.cos(pipViewYaw);
+  const sinY = Math.sin(pipViewYaw);
+  const x1 = cosY * v[0] + sinY * v[2];
+  const z1 = -sinY * v[0] + cosY * v[2];
+
+  const cosP = Math.cos(pipViewPitch);
+  const sinP = Math.sin(pipViewPitch);
+  const y2 = cosP * v[1] - sinP * z1;
+  const z2 = sinP * v[1] + cosP * z1;
+
+  return [x1, y2, z2];
+}
+
+function projectPointForPip(point, width, height) {
+  const relative = scale(sub(point, pipSceneCenter), 1 / Math.max(pipSceneRadius, 1e-6));
+  const [x, y, z] = rotateForPip(relative);
+  const depth = z + pipViewDistance;
+  if (depth <= 0.05) {
+    return null;
+  }
+
+  const focal = Math.min(width, height) * 0.44;
+  return {
+    x: width * 0.5 + (x / depth) * focal,
+    y: height * 0.5 - (y / depth) * focal,
+    depth,
+  };
+}
+
+function computePipSceneParams() {
+  if (!images.length) {
+    pipSceneCenter = [0, 0, 0];
+    pipSceneRadius = 1;
+    return;
+  }
+
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (const img of images) {
+    cx += img.center[0];
+    cy += img.center[1];
+    cz += img.center[2];
+  }
+  pipSceneCenter = [cx / images.length, cy / images.length, cz / images.length];
+
+  let maxRadius = 0;
+  for (const img of images) {
+    const d = sub(img.center, pipSceneCenter);
+    maxRadius = Math.max(maxRadius, Math.hypot(d[0], d[1], d[2]));
+  }
+  pipSceneRadius = Math.max(maxRadius, 1e-3);
+}
+
+function drawPipAxes(width, height) {
+  const axisLen = pipSceneRadius * 0.38;
+  const origin = projectPointForPip(pipSceneCenter, width, height);
+  if (!origin) {
+    return;
+  }
+
+  const axisX = projectPointForPip(add(pipSceneCenter, [axisLen, 0, 0]), width, height);
+  const axisY = projectPointForPip(add(pipSceneCenter, [0, axisLen, 0]), width, height);
+  const axisZ = projectPointForPip(add(pipSceneCenter, [0, 0, axisLen]), width, height);
+
+  pipCtx.lineWidth = 1.4;
+
+  if (axisX) {
+    pipCtx.strokeStyle = "rgba(248, 113, 113, 0.85)";
+    pipCtx.beginPath();
+    pipCtx.moveTo(origin.x, origin.y);
+    pipCtx.lineTo(axisX.x, axisX.y);
+    pipCtx.stroke();
+  }
+  if (axisY) {
+    pipCtx.strokeStyle = "rgba(74, 222, 128, 0.85)";
+    pipCtx.beginPath();
+    pipCtx.moveTo(origin.x, origin.y);
+    pipCtx.lineTo(axisY.x, axisY.y);
+    pipCtx.stroke();
+  }
+  if (axisZ) {
+    pipCtx.strokeStyle = "rgba(96, 165, 250, 0.85)";
+    pipCtx.beginPath();
+    pipCtx.moveTo(origin.x, origin.y);
+    pipCtx.lineTo(axisZ.x, axisZ.y);
+    pipCtx.stroke();
+  }
+}
+
+function drawPipCurrentCameraDirection(width, height) {
+  const current = images[currentIndex];
+  if (!current) {
+    return;
+  }
+
+  const origin = projectPointForPip(current.center, width, height);
+  const tipWorld = add(current.center, scale(current.forward, pipSceneRadius * 0.3));
+  const tip = projectPointForPip(tipWorld, width, height);
+
+  if (!origin || !tip) {
+    return;
+  }
+
+  pipCtx.strokeStyle = "rgba(250, 204, 21, 0.95)";
+  pipCtx.lineWidth = 2;
+  pipCtx.beginPath();
+  pipCtx.moveTo(origin.x, origin.y);
+  pipCtx.lineTo(tip.x, tip.y);
+  pipCtx.stroke();
+}
+
+function drawPipOverlay() {
+  if (!pipVisible || !ensurePipContext() || !images.length) {
+    return;
+  }
+
+  updatePipCanvasSize();
+  const rect = pipCanvasEl.getBoundingClientRect();
+  const width = rect.width;
+  const height = rect.height;
+
+  pipCtx.clearRect(0, 0, width, height);
+
+  drawPipAxes(width, height);
+
+  const projected = [];
+  for (let i = 0; i < images.length; i += 1) {
+    const p = projectPointForPip(images[i].center, width, height);
+    if (p) {
+      projected.push({ index: i, ...p });
+    }
+  }
+
+  projected.sort((a, b) => b.depth - a.depth);
+
+  for (const p of projected) {
+    const isCurrent = p.index === currentIndex;
+    pipCtx.beginPath();
+    pipCtx.arc(p.x, p.y, isCurrent ? 3.6 : 2.3, 0, Math.PI * 2);
+    pipCtx.fillStyle = isCurrent ? "rgba(248, 250, 252, 0.98)" : "rgba(148, 163, 184, 0.82)";
+    pipCtx.fill();
+  }
+
+  drawPipCurrentCameraDirection(width, height);
+}
+
+function setupPipOverlay() {
+  if (pipInitialized || !pipCanvasEl) {
+    return;
+  }
+
+  pipInitialized = true;
+  applyPipUiState();
+
+  if (pipToggleBtnEl) {
+    pipToggleBtnEl.addEventListener("click", () => {
+      pipVisible = !pipVisible;
+      applyPipUiState();
+      drawPipOverlay();
+    });
+  }
+
+  if (pipSizeBtnEl) {
+    pipSizeBtnEl.addEventListener("click", () => {
+      pipSizeIndex = (pipSizeIndex + 1) % PIP_SIZE_CLASSES.length;
+      applyPipUiState();
+      drawPipOverlay();
+    });
+  }
+
+  if (pipPosBtnEl) {
+    pipPosBtnEl.addEventListener("click", () => {
+      pipCornerIndex = (pipCornerIndex + 1) % PIP_POS_CLASSES.length;
+      applyPipUiState();
+      drawPipOverlay();
+    });
+  }
+
+  window.addEventListener("resize", () => {
+    drawPipOverlay();
+  });
 }
 
 // ─── Orbit navigation helpers ───
@@ -714,6 +985,9 @@ async function initialize() {
     if (!images.length) {
       throw new Error("Failed to parse pose data from images.txt");
     }
+
+    computePipSceneParams();
+    setupPipOverlay();
 
     if (navigationMode === "orbit") {
       computeOrbitParams();

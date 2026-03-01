@@ -130,21 +130,21 @@ def clip_and_composite(image: Image.Image, mask: Image.Image, base: Image.Image)
     マスクを使って入力画像をクリッピングし、ベース画像にコンポジットする。
     マスクの白い部分が残る領域。
     """
-    # 画像を RGBA に変換
+    # Convert image to RGBA
     image = image.convert("RGBA")
-    # マスクをグレースケールに変換
+    # Convert mask to grayscale
     mask_gray = mask.convert("L")
 
-    # マスクサイズと画像サイズが異なる場合はマスクをリサイズ
+    # Resize mask if its size differs from the image size
     if mask_gray.size != image.size:
         print(f"  [WARN] マスクサイズ {mask_gray.size} を画像サイズ {image.size} にリサイズします")
         mask_gray = mask_gray.resize(image.size, Image.LANCZOS)
 
-    # 入力画像にマスクをアルファとして適用
+    # Apply mask as alpha channel to the input image
     clipped = Image.new("RGBA", image.size, (0, 0, 0, 0))
     clipped.paste(image, mask=mask_gray)
 
-    # ベース画像にコンポジット
+    # Composite onto the base image
     result = base.copy()
     if result.size != clipped.size:
         result = result.resize(clipped.size, Image.LANCZOS)
@@ -207,7 +207,7 @@ def main():
     print("マスククリッピング ツール")
     print("=" * 50)
 
-    # 設定読み込み
+    # Load configuration
     config = load_config()
 
     script_dir = Path(__file__).parent
@@ -215,7 +215,7 @@ def main():
     mask_folder  = Path(config.get("mask_folder", "./input_masks"))
     output_folder = Path(config.get("output_folder", "./output"))
 
-    # 相対パスの場合は script_dir 基準にする
+    # Resolve relative paths against script_dir
     if not image_folder.is_absolute():
         image_folder = script_dir / image_folder
     if not mask_folder.is_absolute():
@@ -244,7 +244,7 @@ def main():
     if output_fmt in ("jpg", "jpeg"):
         print(f"  JPEG品質     : {jpeg_quality}")
 
-    # フォルダ存在チェック
+    # Check folder existence
     if not image_folder.exists():
         print(f"\n[ERROR] 画像フォルダが存在しません: {image_folder}")
         sys.exit(1)
@@ -254,7 +254,7 @@ def main():
 
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    # 画像・マスクを収集
+    # Collect images and masks
     images = collect_images(image_folder)
     masks  = collect_images(mask_folder)
 
@@ -262,7 +262,7 @@ def main():
         print(f"\n[ERROR] 画像フォルダに画像がありません: {image_folder}")
         sys.exit(1)
 
-    # 同名マッチング (拡張子無視)
+    # Match files by same stem (ignore extension)
     matched = []
     for stem, img_path in images.items():
         if stem in masks:
@@ -281,29 +281,29 @@ def main():
         try:
             print(f"  処理中: {stem}")
 
-            # 画像読み込み
+            # Load image files
             img = Image.open(img_path)
             mask = Image.open(mask_path)
 
-            # 中心クロップ
+            # Apply center crop
             if center_crop_size is not None:
                 img, mask = center_crop_pair(img, mask, center_crop_size, crop_center_shift)
 
-            # ベース画像生成 (入力画像と同じサイズ)
+            # Generate base image (same size as input image)
             base = create_base_image(img.size, base_color)
 
-            # クリッピング & コンポジット
+            # Clip and composite
             result = clip_and_composite(img, mask, base)
 
-            # 回転
+            # Rotate
             if rotation != 0:
                 result = rotate_image(result, rotation)
 
-            # 出力解像度指定
+            # Apply output resolution if specified
             if output_size is not None and result.size != output_size:
                 result = result.resize(output_size, Image.LANCZOS)
 
-            # 出力
+            # Save output
             out_name = f"{stem}.{output_fmt}"
             out_path = output_folder / out_name
 

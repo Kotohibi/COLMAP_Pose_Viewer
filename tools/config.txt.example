@@ -1,0 +1,39 @@
+# Mask clipping configuration file
+
+# Input image folder
+image_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\up\Focused
+
+# Mask image folder
+mask_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\up\Focused_mask
+
+# Output folder
+output_folder = D:\photogrammetry\pottery\20260225_small_marble\images_many\crop_small
+
+# Base image background color (R, G, B) 0-255
+base_color = 0, 0, 0
+
+# Rotation angle (0, 90, 180, 270)
+rotation = 0
+
+# Output format (png, jpg, bmp)
+output_format = jpg
+
+# JPEG quality (1-100, higher = better quality and larger file size)
+# Effective only when output_format is jpg/jpeg
+jpeg_quality = 70
+
+# Output resolution
+# original: same as input image resolution
+# Example: 1920x1080
+output_size = original
+
+# Center crop size
+# none: no crop
+# Example: 1024x1024
+center_crop_size = 2200x2200
+
+# Center crop offset (x,y) [px]
+# x: right +, left -
+# y: down +, up -
+# Example: 120,-80
+crop_center_shift = 0,100

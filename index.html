@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>COLMAP Pose Viewer</title>
-    <link rel="stylesheet" href="styles.css?v=6" />
+    <link rel="stylesheet" href="styles.css?v=8" />
   </head>
   <body>
     <header class="header">
@@ -16,12 +16,21 @@
       <section class="viewer-panel">
         <div class="viewer-frame" id="viewerFrame">
           <img id="mainImage" alt="Selected view" />
+          <div class="pip-controls" aria-label="PiP controls">
+            <button id="pipToggleBtn" type="button" title="Toggle PiP">PiP</button>
+            <button id="pipSizeBtn" type="button" title="Toggle PiP size">Size</button>
+            <button id="pipPosBtn" type="button" title="Move PiP">Corner</button>
+          </div>
+          <div class="pip-overlay pip-size-md pip-pos-tr" id="pipOverlay" aria-hidden="true">
+            <canvas id="pip3dCanvas"></canvas>
+            <div class="pip-label">3D View</div>
+          </div>
         </div>
         <div class="image-meta" id="imageMeta"></div>
       </section>
     </main>
 
-    <script src="script.js?v=3" defer></script>
+    <script src="script.js?v=5" defer></script>
     <script>
       // Prevent iOS Safari page-level gestures (bounce scroll, swipe-back, pinch-zoom)
       document.addEventListener('touchmove', function(e) {
